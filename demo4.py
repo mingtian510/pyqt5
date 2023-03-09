@@ -156,7 +156,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     # 绝对定位
     # ex = ExampleAbsolute()
-    # ex = ExampleBox()
+    ex = ExampleBox()
     # ex = ExampleGrid()
-    ex = ExampleCommit()
+    # ex = ExampleCommit()
     sys.exit(app.exec_())

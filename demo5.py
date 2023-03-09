@@ -95,6 +95,6 @@ class ExampleButton(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    # ex = Example()
-    ex = ExampleButton()
+    ex = Example()
+    # ex = ExampleButton()
     sys.exit(app.exec_())
