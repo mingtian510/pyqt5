@@ -1,73 +1,78 @@
+from PyQt5.QtGui import QPainter
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPlainTextEdit, QTextEdit
+from PyQt5.QtCore import Qt
 import sys
-from PyQt5.QtWidgets import QApplication, QLabel, QTableView, QPushButton, QVBoxLayout, QLineEdit, QHBoxLayout, QWidget, \
-    QMainWindow, \
-    QTableWidget, QHeaderView, QTableWidgetItem, QAction, QFileDialog, QDialog, QDialogButtonBox, QFormLayout
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QColor, QIcon
-from PyQt5.QtCore import QSettings, Qt, QSortFilterProxyModel, QRegExp
-from PyQt5.QtGui import QStandardItemModel, QStandardItem
-from logzero import logger
-
-# 要重写QSortFilterProxyModel类
-class SortFilterProxyModel(QSortFilterProxyModel):
-    def __init__(self, *args, **kwargs):
-        QSortFilterProxyModel.__init__(self, *args, **kwargs)
-        self.filter_column = 1  # 设置默认过滤列为第二列
-
-    def setFilterColumn(self, column):
-        self.filter_column = column
-
-    def filterAcceptsRow(self, source_row, source_parent):
-        index = self.sourceModel().index(source_row, self.filter_column, source_parent)
-        data = self.sourceModel().data(index)
-        if self.filterRegExp().indexIn(data) != -1:
-            return True
-        else:
-            return False
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Create a table view and set the model
-        self.tableView = QTableView()
-        self.model = QStandardItemModel()
-        self.tableView.setModel(self.model)
+        self.text_edit = QPlainTextEdit()
+        self.setCentralWidget(self.text_edit)
+
+        # 添加行号显示
+        self.line_number_area = LineNumberArea(self.text_edit)
+        self.text_edit.blockCountChanged.connect(self.line_number_area.update_width)
+        self.text_edit.updateRequest.connect(self.line_number_area.update)
+        self.line_number_area.update_width()
+
+        self.setGeometry(100, 100, 800, 600)
+        self.setWindowTitle("表格筛选")
+        self.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self.line_number_area.setGeometry(cr.left(), cr.top(), self.line_number_area.width(), cr.height())
 
 
+class LineNumberArea(QTextEdit):
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("background-color: #e0e0e0;")
 
-        # Add some data to the model
-        for row in range(5):
-            for column in range(5):
-                if column == 4:
-                    column = 9
-                item = QStandardItem("({},{})".format(row, column))
-                self.model.setItem(row, column, item)
+    def update_width(self):
+        width = self.fontMetrics().width(str(self.editor.blockCount())) + 10
+        self.setFixedWidth(width)
 
-        # Set the proxy model to the table view
-        self.proxyModel = SortFilterProxyModel()
-        self.proxyModel.setSourceModel(self.model)
-        self.tableView.setModel(self.proxyModel)
-        self.proxyModel.setFilterKeyColumn(1)  # 设置过滤列为第二列
-        self.proxyModel.setFilterRegExp(QRegExp('2'))
+    def update(self, rect, dy):
+        if dy:
+            self.scroll(0, dy)
+        else:
+            self.updateGeometry()
+        if rect.contains(self.editor.viewport().rect()):
+            self.editor.setViewportMargins(self.width(), 0, 0, 0)
 
-        # Add a line edit to filter the data
-        self.lineEdit = QLineEdit()
-        centralWidget = QWidget()
-        layout = QVBoxLayout(centralWidget)
-        layout.addWidget(self.lineEdit)
-        layout.addWidget(self.tableView)
-        # self.lineEdit.textChanged.connect(self.on_lineEdit_textChanged)
+        super().update(rect)
 
-        # Add the table view and line edit to the main window
+    def paintEvent(self, event):
+        self.editor.setViewportMargins(self.width(), 0, 0, 0)
+        block = self.editor.firstVisibleBlock()
+        block_number = block.blockNumber()
+        painter = QPainter(self.viewport())
+        painter.fillRect(event.rect(), Qt.lightGray)
+        font = painter.font()
+        font.setPointSize(10)
+        painter.setFont(font)
+        current_height = self.fontMetrics().height()
+        top = self.editor.blockBoundingGeometry(block).translated(self.editor.contentOffset()).top()
+        bottom = top + self.editor.blockBoundingRect(block).height()
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                number = str(block_number + 1)
+                painter.drawText(0, top, self.width() - 5, current_height, Qt.AlignRight, number)
+            block = block.next()
+            top = bottom
+            bottom = top + self.editor.blockBoundingRect(block).height()
+            block_number += 1
+        painter.end()
+        super().paintEvent(event)
 
-        self.setCentralWidget(centralWidget)
-
-    def on_lineEdit_textChanged(self, text):
-        # self.proxyModel.setFilterRegExp(text)
-        self.proxyModel.setFilterByColumn(QRegExp(text, Qt.CaseSensitive, QRegExp.FixedString))
 
 if __name__ == '__main__':
-    app = QApplication([])
-    window = MainWindow()
-    window.show()
-    app.exec_()
+    app = QApplication(sys.argv)
+    ex = MainWindow()
+    sys.exit(app.exec_())

@@ -1,13 +1,26 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QLabel, QTableView, QVBoxLayout, QLineEdit, QHBoxLayout, QWidget, \
-    QMainWindow, QAction, QDialog, QDialogButtonBox, QPlainTextEdit, QTextEdit
+    QMainWindow, QAction, QDialog, QDialogButtonBox, QPlainTextEdit, QTextEdit, QPushButton
 from PyQt5.QtGui import QIcon, QFont, QFontMetrics
 from PyQt5.QtCore import QSettings, Qt, QSortFilterProxyModel
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from logzero import logger
 import xlrd
 from PyQt5.QtGui import QPainter
+from config_contrast_public import txt_to_xlsx, get_config_field, check_config_result
+from openpyxl import load_workbook
+import re
 
+
+class ConfigBaseData:
+    client_path = ''
+    client_id_col = 0
+    client_field_col = 0
+    server_path = ''
+    server_pos_start_str = ''
+    server_pos_end_str = ''
+    server_id_re = ''
+    server_field_re = ''
 
 # 要重写QSortFilterProxyModel类
 class SortFilterProxyModel(QSortFilterProxyModel):
@@ -79,7 +92,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config_name = None
         self.settings = QSettings('Youkia', 'Config_Filter')
-        if len(self.settings.value('config_dict')):
+        logger.info(self.settings.value('config_dict'))
+        if self.settings.value('config_dict'):
             self.config_dict = self.settings.value('config_dict')
         else:
             self.config_dict = {}
@@ -88,44 +102,87 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # 前端配置数据
-        self.client_id_label = QLabel("前端id标题：")
+        self.client_id_label = QLabel("前端ID标题：")
         self.client_id_text = QLineEdit()
 
         self.client_field_label = QLabel("数据列标题")
         self.client_field_text = QLineEdit()
-        if self.config_name:
-            self.client_id_text.setText(self.config_dict[self.config_name]['client_id_col'])
-            self.client_field_text.setText(self.config_dict[self.config_name]['client_field_col'])
-        # self.client_field_text.textChanged.connect(self.set_search_col)
+        # 如果有配置名字，初始化保存好的本地数据
+        # if self.config_name:
+        #     self.client_id_text.setText(self.config_dict[self.config_name]['client_id_col'])
+        #     self.client_field_text.setText(self.config_dict[self.config_name]['client_field_col'])
         self.client_field_text.setPlaceholderText("请输入前端配置表所需数据列标题")
         self.client_field_text.setAlignment(Qt.AlignCenter)
+
+        # 后端配置数据
+        self.server_pos_start_label = QLabel("后端开始行文字")
+        self.server_pos_start_text = QLineEdit()
+
+        self.server_pos_end_label = QLabel("后端结束行文字")
+        self.server_pos_end_text = QLineEdit()
+
+        self.server_id_re_label = QLabel("后端ID数据正则表达式")
+        self.server_id_re_text = QLineEdit()
+
+        self.server_field_re_label = QLabel("后端字段数据正则表达式")
+        self.server_field_re_text = QLineEdit()
+
+
+        config_form_layout = QHBoxLayout()
+        # 前端
+        config_form_layout.addWidget(self.client_id_label)
+        config_form_layout.addWidget(self.client_id_text)
+        config_form_layout.addWidget(self.client_field_label)
+        config_form_layout.addWidget(self.client_field_text)
+
+        # 后端
+        config_form_layout.addWidget(self.server_pos_start_label)
+        config_form_layout.addWidget(self.server_pos_start_text)
+        config_form_layout.addWidget(self.server_pos_end_label)
+        config_form_layout.addWidget(self.server_pos_end_text)
+        config_form_layout.addWidget(self.server_id_re_label)
+        config_form_layout.addWidget(self.server_id_re_text)
+        config_form_layout.addWidget(self.server_field_re_label)
+        config_form_layout.addWidget(self.server_field_re_text)
+
+
+        # 保存按钮
+        self.submit_button = QPushButton('保存配置设置', self)
+        self.submit_button.clicked.connect(self.submit_config_setting)
+
+        config_form_layout.addWidget(self.submit_button)
 
         # Create table view
         self.table_view_client = QTableView()
         self.table_view_server = QPlainTextEdit()
-        # 添加行号显示
-        self.line_number_area = LineNumberArea(self.table_view_server)
-        self.table_view_server.blockCountChanged.connect(self.line_number_area.update_width)
-        self.table_view_server.updateRequest.connect(self.line_number_area.update)
-        self.line_number_area.update_width()
-
-
         self.table_view_server.setReadOnly(True)
 
-        search_layout = QHBoxLayout()
-        search_layout.addWidget(self.search_col_label)
-        search_layout.addWidget(self.search_col_edit)
-        search_layout.addWidget(self.search_label)
-        search_layout.addWidget(self.search_edit)
 
         table_layout = QHBoxLayout()
         table_layout.addWidget(self.table_view_client)
-        table_layout.addWidget(self.line_number_area)
         table_layout.addWidget(self.table_view_server)
 
+        # 配置对比按钮
+        self.check_button = QPushButton('前后配置比对', self)
+        self.check_button.clicked.connect(self.check_config)
+
+        check_button_layout = QHBoxLayout()
+        check_button_layout.addWidget(self.check_button)
+
+        # 结果文本框
+        self.result_text = QTextEdit()
+        self.result_text.setReadOnly(True)
+
+        result_layout = QHBoxLayout()
+        result_layout.addWidget(self.result_text)
+
+
+        # 主视图
         main_layout = QVBoxLayout(central_widget)
-        main_layout.addLayout(search_layout)
+        main_layout.addLayout(config_form_layout)
         main_layout.addLayout(table_layout)
+        main_layout.addLayout(check_button_layout)
+        main_layout.addLayout(result_layout)
 
         self.statusBar()
 
@@ -134,17 +191,24 @@ class MainWindow(QMainWindow):
         # openFile.setShortcut('Ctrl+O')
 
         # 创建设置配置文件的动作
-        setclientFilePath = QAction('设置配置表路径', self)
-        setclientFilePath.setShortcut('Ctrl+O')
-        setclientFilePath.triggered.connect(self.set_config_file_path)
+        set_file_path_action = QAction('设置配置表路径', self)
+        set_file_path_action.setShortcut('Ctrl+O')
+        set_file_path_action.triggered.connect(self.set_config_file_path)
 
         # 创建菜单栏
         menubar = self.menuBar()
         fileMenu = menubar.addMenu('文件')
-        # fileMenu.addAction(openFile)
-        fileMenu.addAction(setclientFilePath)
+        fileMenu.addAction(set_file_path_action)
 
-        self.init_local_data()
+        localconfigMenu = menubar.addMenu('配置表选择')
+        for name in self.config_dict:
+            action = QAction(name, self)
+            action.triggered.connect(self.select_config_name)
+            localconfigMenu.addAction(action)
+
+
+        if self.config_name:
+            self.init_local_data()
 
         # Set window properties
         self.setGeometry(100, 100, 800, 600)
@@ -154,10 +218,10 @@ class MainWindow(QMainWindow):
     def init_table(self, file_path, file_type):
         if file_type == 'client':
             # 设置表格视图属性
-            self.table_view_client.setSortingEnabled(True)
-            self.table_view_client.setEditTriggers(QTableView.NoEditTriggers)
-            self.table_view_client.setSelectionBehavior(QTableView.SelectRows)
-            self.table_view_client.setSelectionMode(QTableView.SingleSelection)
+            # self.table_view_client.setSortingEnabled(True)
+            # self.table_view_client.setEditTriggers(QTableView.NoEditTriggers)
+            # self.table_view_client.setSelectionBehavior(QTableView.SelectRows)
+            # self.table_view_client.setSelectionMode(QTableView.SingleSelection)
             if file_path.endswith('.txt'):
                 with open(r'' + file_path, 'r', encoding='UTF-8') as f:
                     try:
@@ -165,7 +229,7 @@ class MainWindow(QMainWindow):
                     except Exception as e:
                         self.statusBar().showMessage("文件读取失败：" + str(e))
                     _list = content.split('\n')
-                    title_row = _list[2].split("\t")
+                    title_row = _list[1].split("\t")
                     # title_row = [i for i in title_row if i.strip() != ""]
                     self.model = QStandardItemModel(len(_list) - 2, len(title_row))
                     self.model.setHorizontalHeaderLabels(title_row)
@@ -173,7 +237,7 @@ class MainWindow(QMainWindow):
 
                     # 在表格控件中显示列内容
                     try:
-                        for m, val in enumerate(_list[2:]):
+                        for m, val in enumerate(_list[3:]):
                             if val:
                                 # val 为每行的数据
                                 cell_val_list = val.split("\t")
@@ -206,21 +270,6 @@ class MainWindow(QMainWindow):
                             self.model.setItem(n, i, item)
                 except Exception as e:
                     self.statusBar().showMessage("初始化表格数据失败：" + str(e))
-            try:
-                # 创建过滤器模型
-                self.filter_model = SortFilterProxyModel()
-                self.filter_model.setSourceModel(self.model)
-
-                # 设置表格视图模型
-                self.table_view_client.setModel(self.filter_model)
-
-                self.filter_model.setFilterColumn(self.search_column)  # 设置过滤列为对应列
-                # self.filter_model.setFilterRegExp(QRegExp('2'))
-
-                # 连接搜索框的文本变化信号到过滤器模型的过滤正则表达式槽函数
-                self.search_edit.textChanged.connect(self.filter_model.setFilterRegExp)
-            except Exception as e:
-                self.statusBar().showMessage("设置过滤模型失败：" + str(e))
 
         elif file_type == 'server':
             try:
@@ -232,43 +281,8 @@ class MainWindow(QMainWindow):
                             self.statusBar().showMessage("文件读取失败：" + str(e))
                         # _list = content.split('\n')
                         self.table_view_server.setPlainText(content)
-                        # title_row = [i for i in title_row if i.strip() != ""]
-                        # try:
-                        #     for m, val in enumerate(_list[2:]):
-                        #         if val:
-                        #             # val 为每行的数据
-                        #             cell_val_list = val.split("\t")
-                        #             for i, cell in enumerate(cell_val_list):
-                        #                 item = QStandardItem(str(cell))
-                        #                 self.model.setItem(m, i, item)
-                        #         else:
-                        #             continue
-                        # except Exception as e:
-                        #     self.statusBar().showMessage("初始化表格数据失败：" + str(e))
             except Exception as e:
                 self.statusBar().showMessage("初始化后台表数据失败：" + str(e))
-
-    # 获取保存好的搜索title数据
-    def init_search_col(self):
-        title_text = self.settings.value('title_text')
-        if title_text:
-            try:
-                for column in range(self.model.columnCount()):
-                    if self.model.headerData(column, Qt.Horizontal) == title_text:
-                        # 找到了，column 就是对应的列索引
-                        self.search_column = column
-                        self.filter_model.setFilterColumn(self.search_column)
-                        self.statusBar().showMessage("找到对应列数据，请输入搜索内容")
-                        break
-                else:
-                    # 没有找到
-                    self.statusBar().showMessage("未找到对应列，请检查搜索列数据是否正确")
-            except Exception as e:
-                self.statusBar().showMessage("数据异常，请设置文件路径")
-
-    def set_search_col(self):
-        self.settings.setValue('title_text', self.search_col_edit.text())
-        self.init_search_col()
 
     def set_config_file_path(self):
         # 创建一个对话框
@@ -281,20 +295,20 @@ class MainWindow(QMainWindow):
         # 创建配置表名字标签和文本框
         config_name_label = QLabel("自定义配置表名：", dialog)
         layout.addWidget(config_name_label)
-        config_name_textEdit = QLineEdit(dialog)
-        layout.addWidget(config_name_textEdit)
+        config_name_text_Edit = QLineEdit(dialog)
+        layout.addWidget(config_name_text_Edit)
 
         # 创建前端路径标签和文本框
-        client_label = QLabel("前端路径：", dialog)
+        client_label = QLabel("前端文件路径：", dialog)
         layout.addWidget(client_label)
-        client_textEdit = QLineEdit(dialog)
-        layout.addWidget(client_textEdit)
+        client_text_Edit = QLineEdit(dialog)
+        layout.addWidget(client_text_Edit)
 
         # 创建后端路径标签和文本框
-        server_label = QLabel("前端路径：", dialog)
+        server_label = QLabel("后端文件路径：", dialog)
         layout.addWidget(server_label)
-        server_textEdit = QLineEdit(dialog)
-        layout.addWidget(server_textEdit)
+        server_text_Edit = QLineEdit(dialog)
+        layout.addWidget(server_text_Edit)
 
         # 创建一个按钮盒子
         buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dialog)
@@ -305,9 +319,10 @@ class MainWindow(QMainWindow):
         # 显示对话框
         if dialog.exec_() == QDialog.Accepted:
             try:
-                client_path = client_textEdit.text()
-                server_path = server_textEdit.text()
+                client_path = client_text_Edit.text()
+                server_path = server_text_Edit.text()
                 logger.info(self.config_dict)
+                # 初始化基础数据
                 client_field_col = 0
                 client_id_col = 0
                 server_pos_start_str = ''
@@ -324,23 +339,116 @@ class MainWindow(QMainWindow):
                     server_id_re=server_id_re,
                     server_field_re=server_field_re
                 )
-                self.config_dict[config_name_textEdit.text()] = config_data
+                self.config_dict[config_name_text_Edit.text()] = config_data
+                self.config_name = config_name_text_Edit.text()
                 self.settings.setValue('config_dict', self.config_dict)
+                logger.info(self.config_dict)
+                self.select_config_name()
             except Exception as e:
                 self.statusBar().showMessage(str(e))
 
-    def init_local_data(self):
-        client_config_path = self.settings.value('client_config_path')
+    def select_config_name(self):
+        if not self.config_name:
+            self.config_name = self.sender().text()
+        logger.info(self.config_name)
+        client_config_path = self.config_dict[self.config_name]['client_path']
         if client_config_path:
             self.init_table(client_config_path, 'client')
-            try:
-                self.model
-            except Exception as e:
-                self.statusBar().showMessage("表格读取失败： " + str(e))
-            self.init_search_col()
-        server_config_path = self.settings.value('server_config_path')
+        server_config_path = self.config_dict[self.config_name]['server_path']
         if server_config_path:
             self.init_table(server_config_path, 'server')
+
+    def submit_config_setting(self):
+        if self.config_name:
+            try:
+                headr = self.table_view_client.horizontalHeader()
+                column_count = self.model.columnCount()
+                client_id_col = -1
+                client_field_col = -1
+                for i in range(column_count):
+                    header_data = self.model.headerData(i, Qt.Horizontal)
+                    if header_data == self.client_id_text.text():
+                        client_id_col = headr.visualIndex(i) + 1
+                    if header_data == self.client_field_text.text():
+                        client_field_col = headr.visualIndex(i) + 1
+                _dict = dict(
+                    client_id_col=client_id_col,
+                    client_field_col=client_field_col,
+                    server_pos_start_str=self.server_pos_start_text.text(),
+                    server_pos_end_str=self.server_pos_end_text.text(),
+                    server_id_re=self.server_id_re_text.text(),
+                    server_field_re=self.server_field_re_text.text()
+                )
+                self.config_dict[self.config_name].update(_dict)
+                logger.info(self.config_dict[self.config_name])
+                self.settings.setValue('config_dict', self.config_dict)
+            except Exception as e:
+                logger.info(e)
+                self.statusBar().showMessage("报错设置失败：" + str(e))
+
+        else:
+            self.statusBar().showMessage('未选中对应配置表')
+
+    def check_config(self):
+        config_data = self.config_dict[self.config_name]
+        client_path = self.config_dict[self.config_name]['client_path']
+        server_path = self.config_dict[self.config_name]['server_path']
+        client_file = self.config_name + '_client.xlsx'
+        txt_to_xlsx(client_path, client_file)
+        client_workbook = load_workbook(filename=client_file, data_only=True)
+
+        client_sheet = client_workbook['sheet1']
+
+        # # 获取字段名字典
+        # field_dict = get_config_field(qian_sheet)
+        #
+        # # 获取堆叠数量列数
+        # qian_pilenum_col = field_dict['堆叠数量']
+
+        # # 获取出售价格列数
+        # qian_value_col = field_dict['出售价格']
+
+        client_result_dict = {}
+        # 获取道具sid
+        for cols in client_sheet.iter_cols(min_row=50, values_only=False):  # 去掉前台配置表中多余的废弃道具，所以从50行开始取数据
+            logger.info(cols[0].column)
+            logger.info(config_data['client_id_col'])
+            # print(cols)
+            if cols[0].column == config_data['client_id_col']:
+                for cell in cols:
+                    logger.info(cell.value)
+                    client_value = client_sheet.cell(row=cell.row,
+                                                   column=(cell.column + config_data['client_field_col'] - config_data['client_id_col'])).value
+                    if client_value is None:
+                        client_value = '0'
+                    client_result_dict[cell.value] = '{}'.format(client_value)
+        logger.info(client_result_dict)
+
+        # 处理后台数据，这里直接把后台配置表需要的数据截取出来，也可以把后台配置表处理为xlsx文件再处理
+        # f = open('./hou/goods.cfg')
+        with open(r'' + server_path, 'r', encoding='UTF-8') as f:
+            server_content = f.read()
+        # print(re.search('{.+?keypos', data).group())
+        pos_start = server_content.find(config_data['server_pos_start_str'])
+        pos_end = server_content.find(config_data['server_pos_end_str'])
+        data_new = server_content[pos_start + len(config_data['server_pos_start_str']):pos_end]
+        data_new = data_new.replace(' ', '').split('\n')[2:-2]
+        server_result_dict = {}
+        for _data in data_new:
+            # 取道具sid数据
+            server_sid = re.findall(config_data['server_id_re'], _data)
+            # 取道具堆叠上限数据
+            server_value = re.findall(config_data['server_field_re'], _data)
+            if server_value == [] and len(server_value) == 0:
+                server_value = ['0']
+            server_result_dict[server_sid[0]] = "{}".format(server_value[0])
+        logger.info(server_result_dict)
+        # 前后数据对比结果
+        result = check_config_result(client_result_dict, server_result_dict, self.config_name)
+        result = result + '\n' + str(client_result_dict) + '\n' + str(server_result_dict)
+        self.result_text.setText(result)
+
+
 
 
 if __name__ == "__main__":
