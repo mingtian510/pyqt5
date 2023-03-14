@@ -3,21 +3,41 @@ from openpyxl import Workbook
 from logzero import logger
 
 def check_config_result(client_data, server_data, result=""):
-    res = None
+    res = result + '\n'
+    if not len(client_data):
+        res += "前端未找到对应字段数据，请检查配置内容 \n"
+        return res
+    if not len(server_data):
+        res += "后端未找到对应字段数据，请检查配置内容 \n"
+        return res
     if len(client_data) == len(server_data):
         for key1 in client_data:
-            value1 = server_data.get(key1)
+            value1 = client_data.get(key1)
             value2 = server_data.get(key1)
             if value2:
                 if value1 != value2:
-                    # print('{}不一致的sid为{}，前台配置为{}，后台配置为{}'.format(result, key1, value1, value2))
-                    res = '{}不一致的sid为{}，前台配置为{}，后台配置为{}'.format(result, key1, value1, value2)
+                    res += '不一致的sid：{}，前台配置：{}，后台配置：{} \n'.format(key1, value1, value2)
             else:
-                # print('sid不一样的有{}'.format(key1))
-                res = 'sid不一样的有{}'.format(key1)
+                res += 'sid不一样，前端sid：{} \n'.format(key1)
 
     else:
-        res = "{}前后配置长度不一致".format(result)
+        res += "前后配置长度不一致， 前端有{}条数据， 后端有{}条数据 \n".format(len(client_data), len(server_data))
+        # 用长度长的作为基准
+        if len(client_data) > len(server_data):
+            for key1 in client_data:
+                value1 = client_data.get(key1)
+                value2 = server_data.get(key1)
+                if value2:
+                    if value1 != value2:
+                        res += '不一致的sid：{}，前台配置：{}，后台配置：{} \n'.format(key1, value1, value2)
+        else:
+            for key1 in server_data:
+                value1 = server_data.get(key1)
+                value2 = client_data.get(key1)
+                if value2:
+                    if value1 != value2:
+                        res += '不一致的sid：{}，前台配置：{}，后台配置：{} \n'.format(key1, value2, value1)
+
     return res
 
 

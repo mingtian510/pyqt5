@@ -7,9 +7,11 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from logzero import logger
 import xlrd
 from PyQt5.QtGui import QPainter
-from config_contrast_public import txt_to_xlsx, get_config_field, check_config_result
+from config_contrast_public import txt_to_xlsx, check_config_result
 from openpyxl import load_workbook
 import re
+
+import traceback
 
 
 class ConfigBaseData:
@@ -156,6 +158,7 @@ class MainWindow(QMainWindow):
         self.table_view_client = QTableView()
         self.table_view_server = QPlainTextEdit()
         self.table_view_server.setReadOnly(True)
+        self.table_view_server.setLineWrapMode(QPlainTextEdit.NoWrap)
 
 
         table_layout = QHBoxLayout()
@@ -191,20 +194,23 @@ class MainWindow(QMainWindow):
         # openFile.setShortcut('Ctrl+O')
 
         # 创建设置配置文件的动作
-        set_file_path_action = QAction('设置配置表路径', self)
+        set_file_path_action = QAction('增加配置表路径', self)
         set_file_path_action.setShortcut('Ctrl+O')
         set_file_path_action.triggered.connect(self.set_config_file_path)
 
+        # 编辑配置表设置
+        editor_file_path_action = QAction('编辑配置表信息', self)
+        editor_file_path_action.setShortcut('Ctrl+E')
+        editor_file_path_action.triggered.connect(self.editor_config_data)
+
         # 创建菜单栏
         menubar = self.menuBar()
-        fileMenu = menubar.addMenu('文件')
+        fileMenu = menubar.addMenu('配置表设置')
         fileMenu.addAction(set_file_path_action)
+        fileMenu.addAction(editor_file_path_action)
 
-        localconfigMenu = menubar.addMenu('配置表选择')
-        for name in self.config_dict:
-            action = QAction(name, self)
-            action.triggered.connect(self.select_config_name)
-            localconfigMenu.addAction(action)
+        self.localconfigMenu = menubar.addMenu('配置表选择')
+        self.load_config_dict_of_menu()
 
 
         if self.config_name:
@@ -234,6 +240,7 @@ class MainWindow(QMainWindow):
                     self.model = QStandardItemModel(len(_list) - 2, len(title_row))
                     self.model.setHorizontalHeaderLabels(title_row)
                     self.table_view_client.setModel(self.model)
+                    self.table_view_client.reset()
 
                     # 在表格控件中显示列内容
                     try:
@@ -281,13 +288,14 @@ class MainWindow(QMainWindow):
                             self.statusBar().showMessage("文件读取失败：" + str(e))
                         # _list = content.split('\n')
                         self.table_view_server.setPlainText(content)
+                        self.table_view_server.update()
             except Exception as e:
                 self.statusBar().showMessage("初始化后台表数据失败：" + str(e))
 
     def set_config_file_path(self):
         # 创建一个对话框
         dialog = QDialog(self)
-        dialog.setWindowTitle("设置配置表路径")
+        dialog.setWindowTitle("增加配置表路径")
 
         # 创建一个垂直布局
         layout = QVBoxLayout(dialog)
@@ -340,23 +348,125 @@ class MainWindow(QMainWindow):
                     server_field_re=server_field_re
                 )
                 self.config_dict[config_name_text_Edit.text()] = config_data
-                self.config_name = config_name_text_Edit.text()
+                # self.config_name = config_name_text_Edit.text()
                 self.settings.setValue('config_dict', self.config_dict)
                 logger.info(self.config_dict)
-                self.select_config_name()
+                self.load_config_dict_of_menu()
             except Exception as e:
                 self.statusBar().showMessage(str(e))
 
+    def editor_config_data(self):
+        # 创建一个对话框
+        self.editor_dialog = QDialog(self)
+        self.editor_dialog.setWindowTitle("编辑配置表路径")
+
+
+        try:
+            self.load_config_dict_of_editor_dialog()
+        except Exception as e:
+            logger.info(e)
+        # 显示对话框
+        if self.editor_dialog.exec_() == QDialog.Accepted:
+            pass
+
     def select_config_name(self):
-        if not self.config_name:
-            self.config_name = self.sender().text()
-        logger.info(self.config_name)
+        # if not self.config_name:
+        self.config_name = self.sender().text()
         client_config_path = self.config_dict[self.config_name]['client_path']
         if client_config_path:
             self.init_table(client_config_path, 'client')
         server_config_path = self.config_dict[self.config_name]['server_path']
         if server_config_path:
             self.init_table(server_config_path, 'server')
+        client_id_col = self.config_dict[self.config_name]['client_id_col']
+        client_field_col = self.config_dict[self.config_name]['client_field_col']
+        server_pos_start_str = self.config_dict[self.config_name]['server_pos_start_str']
+        server_pos_end_str = self.config_dict[self.config_name]['server_pos_end_str']
+        server_id_re = self.config_dict[self.config_name]['server_id_re']
+        server_field_re = self.config_dict[self.config_name]['server_field_re']
+        client_id_col_text = ''
+        client_field_col_text = ''
+        if client_id_col:
+            client_id_col_text = self.model.headerData(client_id_col - 1, Qt.Horizontal)
+        if client_field_col:
+            client_field_col_text = self.model.headerData(client_field_col - 1, Qt.Horizontal)
+        self.client_id_text.setText(client_id_col_text)
+        self.client_field_text.setText(client_field_col_text)
+        self.server_pos_start_text.setText(server_pos_start_str)
+        self.server_pos_end_text.setText(server_pos_end_str)
+        self.server_id_re_text.setText(server_id_re)
+        self.server_field_re_text.setText(server_field_re)
+
+    def delete_config_item(self):
+        sender_button = self.sender()
+        logger.info(sender_button.objectName())
+        del self.config_dict[sender_button.objectName()]
+        self.settings.setValue('config_dict', self.config_dict)
+        # 刷新列表
+        self.load_config_dict_of_menu()
+        self.load_config_dict_of_editor_dialog()
+
+
+    def editor_config_item(self):
+        sender_button = self.sender()
+        logger.info(sender_button.objectName())
+
+
+    # 根据self.config_dict加载菜单中的配置表列表
+    def load_config_dict_of_menu(self):
+        self.localconfigMenu.clear()
+        for name in self.config_dict:
+            action = QAction(name, self)
+            action.triggered.connect(self.select_config_name)
+            self.localconfigMenu.addAction(action)
+
+    # 根据self.config_dict加载editor_config_dialog中的配置表列表
+    def load_config_dict_of_editor_dialog(self):
+        # self.list_layout.clear()
+        # 创建一个垂直布局
+        list_layout = QVBoxLayout(self.editor_dialog)
+
+        for config_name in self.config_dict:
+            config_layout = QHBoxLayout(self.editor_dialog)
+
+            # 创建配置表名字标签和文本框
+            config_name_label = QLabel('配置表名')
+            config_name_text = QLineEdit()
+            config_name_text.setText(config_name)
+
+            config_client_label = QLabel('前端文件路径')
+            config_client_path = QLineEdit()
+            config_client_path.setText(self.config_dict[config_name]['client_path'])
+
+            config_server_label = QLabel('后端文件路径')
+            config_server_path = QLineEdit()
+            config_server_path.setText(self.config_dict[config_name]['server_path'])
+
+            delete_button = QPushButton('删除')
+            delete_button.setObjectName(config_name)
+            delete_button.clicked.connect(self.delete_config_item)
+
+            save_button = QPushButton('保存')
+            save_button.setObjectName(config_name)
+            save_button.clicked.connect(self.editor_config_item)
+
+            config_layout.addWidget(config_name_label)
+            config_layout.addWidget(config_name_text)
+            config_layout.addWidget(config_client_label)
+            config_layout.addWidget(config_client_path)
+            config_layout.addWidget(config_server_label)
+            config_layout.addWidget(config_server_path)
+            config_layout.addWidget(delete_button)
+
+            list_layout.addLayout(config_layout)
+
+
+        # 创建一个按钮盒子
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self.editor_dialog)
+        buttonBox.accepted.connect(self.editor_dialog.accept)
+        buttonBox.rejected.connect(self.editor_dialog.reject)
+        list_layout.addWidget(buttonBox)
+
 
     def submit_config_setting(self):
         if self.config_name:
@@ -380,8 +490,9 @@ class MainWindow(QMainWindow):
                     server_field_re=self.server_field_re_text.text()
                 )
                 self.config_dict[self.config_name].update(_dict)
-                logger.info(self.config_dict[self.config_name])
+                # logger.info(self.config_dict[self.config_name])
                 self.settings.setValue('config_dict', self.config_dict)
+                self.statusBar().showMessage("保存成功！")
             except Exception as e:
                 logger.info(e)
                 self.statusBar().showMessage("报错设置失败：" + str(e))
@@ -394,58 +505,62 @@ class MainWindow(QMainWindow):
         client_path = self.config_dict[self.config_name]['client_path']
         server_path = self.config_dict[self.config_name]['server_path']
         client_file = self.config_name + '_client.xlsx'
-        txt_to_xlsx(client_path, client_file)
-        client_workbook = load_workbook(filename=client_file, data_only=True)
-
-        client_sheet = client_workbook['sheet1']
-
-        # # 获取字段名字典
-        # field_dict = get_config_field(qian_sheet)
-        #
-        # # 获取堆叠数量列数
-        # qian_pilenum_col = field_dict['堆叠数量']
-
-        # # 获取出售价格列数
-        # qian_value_col = field_dict['出售价格']
-
         client_result_dict = {}
-        # 获取道具sid
-        for cols in client_sheet.iter_cols(min_row=50, values_only=False):  # 去掉前台配置表中多余的废弃道具，所以从50行开始取数据
-            logger.info(cols[0].column)
-            logger.info(config_data['client_id_col'])
-            # print(cols)
-            if cols[0].column == config_data['client_id_col']:
-                for cell in cols:
-                    logger.info(cell.value)
-                    client_value = client_sheet.cell(row=cell.row,
-                                                   column=(cell.column + config_data['client_field_col'] - config_data['client_id_col'])).value
-                    if client_value is None:
-                        client_value = '0'
-                    client_result_dict[cell.value] = '{}'.format(client_value)
-        logger.info(client_result_dict)
+        server_result_dict = {}
+        try:
+            txt_to_xlsx(client_path, client_file)
+            client_workbook = load_workbook(filename=client_file, data_only=True)
+            client_sheet = client_workbook['sheet1']
+            # 获取道具sid
+            for cols in client_sheet.iter_cols(min_row=50, values_only=False):  # 去掉前台配置表中多余的废弃道具，所以从50行开始取数据
+                # print(cols)
+                if cols[0].column == config_data['client_id_col']:
+                    for cell in cols:
+                        if not cell.value:
+                            continue
+                        client_value = client_sheet.cell(row=cell.row,
+                                                       column=(cell.column + config_data['client_field_col'] - config_data['client_id_col'])).value
+                        if client_value is None:
+                            client_value = '0'
+                        client_result_dict[cell.value] = '{}'.format(client_value)
+            logger.info(client_result_dict)
+        except Exception as e:
+            self.statusBar().showMessage("前端配置表数据读取失败： " + str(e))
+
 
         # 处理后台数据，这里直接把后台配置表需要的数据截取出来，也可以把后台配置表处理为xlsx文件再处理
         # f = open('./hou/goods.cfg')
-        with open(r'' + server_path, 'r', encoding='UTF-8') as f:
-            server_content = f.read()
-        # print(re.search('{.+?keypos', data).group())
-        pos_start = server_content.find(config_data['server_pos_start_str'])
-        pos_end = server_content.find(config_data['server_pos_end_str'])
-        data_new = server_content[pos_start + len(config_data['server_pos_start_str']):pos_end]
-        data_new = data_new.replace(' ', '').split('\n')[2:-2]
-        server_result_dict = {}
-        for _data in data_new:
-            # 取道具sid数据
-            server_sid = re.findall(config_data['server_id_re'], _data)
-            # 取道具堆叠上限数据
-            server_value = re.findall(config_data['server_field_re'], _data)
-            if server_value == [] and len(server_value) == 0:
-                server_value = ['0']
-            server_result_dict[server_sid[0]] = "{}".format(server_value[0])
-        logger.info(server_result_dict)
+        try:
+            with open(r'' + server_path, 'r', encoding='UTF-8') as f:
+                server_content = f.read()
+            # print(re.search('{.+?keypos', data).group())
+            pos_start = server_content.find(config_data['server_pos_start_str'])
+            pos_end = server_content.find(config_data['server_pos_end_str'])
+            data_new = server_content[pos_start + len(config_data['server_pos_start_str']):pos_end]
+            data_new = data_new.split('\n')[2:-2]
+
+            for _data in data_new:
+                _data = _data.strip()
+                # 为空或者是被注释的则跳过
+                if not _data or _data.startswith('%'):
+                    continue
+                # 取道具sid数据
+                server_sid = re.findall(config_data['server_id_re'], _data)
+                # 取后端值数据
+                server_value = re.findall(config_data['server_field_re'], _data)
+                if server_value == [] and len(server_value) == 0:
+                    server_value = ['0']
+                if len(server_sid) == 0:
+                    self.statusBar().showMessage("后台配置表sid数据读取失败")
+                    return
+                server_result_dict[server_sid[0]] = "{}".format(server_value[0])
+            logger.info(server_result_dict)
+        except Exception as e:
+            self.statusBar().showMessage("后台配置表数据读取失败： " + str(e))
+
         # 前后数据对比结果
         result = check_config_result(client_result_dict, server_result_dict, self.config_name)
-        result = result + '\n' + str(client_result_dict) + '\n' + str(server_result_dict)
+        # result = result + '\n' + str(client_result_dict) + '\n' + str(server_result_dict)
         self.result_text.setText(result)
 
 
